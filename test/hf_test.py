@@ -302,15 +302,6 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             if model_cls in [HubertModel, HubertForSequenceClassification, HubertForCTC]:
                 self.skipTest('Need to support Hubert models')
 
-            # TODO: support Deberta models https://github.com/pytorch/PiPPy/issues/261
-            if model_cls in [DebertaModel, DebertaV2ForMaskedLM, DebertaV2ForSequenceClassification,
-                             DebertaV2ForTokenClassification, DebertaForQuestionAnswering,
-                             DebertaForTokenClassification, DebertaV2ForQuestionAnswering,
-                             DebertaV2ForQuestionAnswering, DebertaV2ForMultipleChoice,
-                             DebertaV2ForMultipleChoice, DebertaV2Model, DebertaForMaskedLM,
-                             DebertaForSequenceClassification]:
-                self.skipTest('Need to support Deberta models')
-
             model, splitter = generate_hf_model(model_cls)
 
             submodules_cnt = splitter(model)
@@ -438,19 +429,21 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                                  GPTJModel, GPTNeoModel, MegatronBertModel, MobileBertModel, RobertaModel, T5Model,
                                  BlenderbotModel, BlenderbotSmallModel, M2M100Model, MT5Model, MarianMTModel,
                                  MarianModel, PegasusModel, OPTModel, Speech2Text2Decoder, TrOCRDecoder, MBartModel,
-                                 CLIPTextModel, PLBartModel, XGLMModel]:
+                                 CLIPTextModel, PLBartModel, XGLMModel, DebertaModel, DebertaV2Model]:
                     self.skipTest('Base models do not have embedded loss')
                 else:
                     raise e
 
             hf_tracer = fx.HFTracer()
 
-            if model_cls in [AlbertForSequenceClassification, BertForSequenceClassification, BartForSequenceClassification,
-                             DistilBertForSequenceClassification, ElectraForSequenceClassification,
-                             GPT2ForSequenceClassification, GPTJForSequenceClassification,
-                             GPTNeoForSequenceClassification, MegatronBertForSequenceClassification,
-                             MobileBertForSequenceClassification, RobertaForSequenceClassification,
-                             MBartForSequenceClassification, PLBartForSequenceClassification]:
+            if model_cls in [AlbertForSequenceClassification, BertForSequenceClassification,
+                             BartForSequenceClassification, DistilBertForSequenceClassification,
+                             ElectraForSequenceClassification, GPT2ForSequenceClassification,
+                             GPTJForSequenceClassification, GPTNeoForSequenceClassification,
+                             MegatronBertForSequenceClassification, MobileBertForSequenceClassification,
+                             RobertaForSequenceClassification, MBartForSequenceClassification,
+                             PLBartForSequenceClassification, DebertaForSequenceClassification,
+                             DebertaV2ForSequenceClassification]:
                 model.config.problem_type = "single_label_classification"
 
             concrete_args = generate_concrete_args_for_model(model, input_dict.keys())
