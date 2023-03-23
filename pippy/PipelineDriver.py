@@ -1420,8 +1420,7 @@ class PipelineDriverBase(torch.nn.Module):
                 if Pipe.is_stage_init_deferred():
                     descr.mod = None
                 else:
-                    mod = split_gm.get_submodule(node.target)
-                    descr.mod = mod
+                    descr.mod = split_gm.get_submodule(node.target)
                 executor_descriptors.append(descr)
             elif (node.op, node.target) == ("call_function", stage_backward):
                 executor_descriptors[bw_idx].has_backward = True
@@ -1480,14 +1479,6 @@ class PipelineDriverBase(torch.nn.Module):
         self.stage_to_executor: Dict = {}
 
         for stage_id, descr in enumerate(executor_descriptors):
-            # Print number of parameters in pipe_model in billions
-            num_params = sum(p.numel() for p in descr.mod.parameters())
-            logging.info(f"Number of parameters in pipe_model: {num_params / 1e9:.2f}B")
-            logging.info('Materializing parameters....')
-            import torchdistx.deferred_init
-            torchdistx.deferred_init.materialize_module(descr.mod)
-            logging.info('Parameters initialized')
-
             # Assign stages to rank workers in a round-robin fashion
             rank = self.all_ranks[stage_id % self.world_size]
             logging.debug(f"[root] Sending stage_id = {stage_id} mod to worker")
@@ -1512,12 +1503,6 @@ class PipelineDriverBase(torch.nn.Module):
             self.stage_to_executor[stage_id] = self.remote_stage_executor_rrefs[
                 descr.name
             ][1]
-
-            for name, param in descr.mod.named_parameters():
-                param.requires_grad_(False)
-                param.copy_(torch.empty(()))
-
-            logging.info(torch.cuda.memory_summary())
 
         # Inform executors of their peers
         for stage_id, executor in self.stage_to_executor.items():
