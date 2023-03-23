@@ -609,6 +609,9 @@ class PipeStageExecutor(EventRecorder):
         logging.info(f"Instantiating PipeStageExecutor for stage {stage_id}")
         self.stage_id = stage_id
         self.mod = mod
+        import torchdistx.deferred_init
+        with torch.device(f"cuda:{rank_worker.rank}"):
+            torchdistx.deferred_init.materialize_module(self.mod)
         self.rank_worker = rank_worker
         # map microbatch ID to list of forward tensor args
         self.fwd_cache: Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
