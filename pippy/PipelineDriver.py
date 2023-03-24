@@ -521,8 +521,7 @@ class RankWorker(EventRecorder):
                         )
                     )
 
-                with torch.autocast('cuda', dtype=torch.bfloat16):
-                    out_val = stage_backward(*args, **kwargs)
+                out_val = stage_backward(*args, **kwargs)
 
                 # Schedule forward stage of a new micro-batch
                 self.outstanding -= 1
