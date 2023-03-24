@@ -440,15 +440,16 @@ class RankWorker(EventRecorder):
                         a.requires_grad_(True)
                     return a
 
-                if no_grad:
-                    with torch.no_grad():
-                        out_val = forward_maybe_with_ddp(args, kwargs)
-                        out_val = pippy.fx.node.map_aggregate(
-                            out_val, set_requires_grad, dont_traverse_size
-                        )
-                else:
-                    with torch.enable_grad():
-                        out_val = forward_maybe_with_ddp(args, kwargs)
+                with torch.autocast('cuda', dtype=torch.bfloat16):
+                    if no_grad:
+                        with torch.no_grad():
+                            out_val = forward_maybe_with_ddp(args, kwargs)
+                            out_val = pippy.fx.node.map_aggregate(
+                                out_val, set_requires_grad, dont_traverse_size
+                            )
+                    else:
+                        with torch.enable_grad():
+                            out_val = forward_maybe_with_ddp(args, kwargs)
 
                 return out_val, flat_args
 
@@ -520,7 +521,8 @@ class RankWorker(EventRecorder):
                         )
                     )
 
-                out_val = stage_backward(*args, **kwargs)
+                with torch.autocast('cuda', dtype=torch.bfloat16):
+                    out_val = stage_backward(*args, **kwargs)
 
                 # Schedule forward stage of a new micro-batch
                 self.outstanding -= 1
