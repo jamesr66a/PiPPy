@@ -69,8 +69,8 @@ def _compile(
     multi_use_param_spec = MultiUseParameterConfig.REPLICATE
 
     # Figure out which output is loss from output_chunk_spec
-    output_loss_value_spec: Any = None
-    if isinstance(output_chunk_spec, dict):
+    output_loss_value_spec: Any = kwargs.pop('output_loss_value_spec', None)
+    if not output_loss_value_spec and isinstance(output_chunk_spec, dict):
         output_loss_value_spec = {
             k: isinstance(v, LossReducer) for k, v in output_chunk_spec.items()
         }
