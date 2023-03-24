@@ -255,7 +255,7 @@ class RankWorker(EventRecorder):
         )
         self.worker_thread.start()
 
-    def create_stage_executor(self, stage_id, mod, mod_name):
+    def create_stage_executor(self, stage_id, mod, mod_name, module_postprocess):
         if stage_id in self.stage_executors:
             raise AssertionError(
                 f"Rank {self.rank} already has stage {stage_id}"
@@ -277,9 +277,12 @@ class RankWorker(EventRecorder):
                         f"though pipeline driver expect it to do so."
                     )
 
+        mod = mod or Pipe.materialize_stage(mod_name)
+        mod = module_postprocess(mod)
+
         self.stage_executors[stage_id] = PipeStageExecutor(
             stage_id=stage_id,
-            mod=mod or Pipe.materialize_stage(mod_name),  # type: ignore[attr-defined]
+            mod=mod,
             rank_worker=self,
             _record_mem_dumps=self._record_mem_dumps,
         )
@@ -1363,6 +1366,7 @@ class PipelineDriverBase(torch.nn.Module):
         checkpoint=False,
         use_c10d=False,
         loss_reducer: LossReducer = sum_reducer,
+        module_postprocess : Optional[Callable] = None,
     ):
         super().__init__()
         self.pipe = pipe
@@ -1390,6 +1394,7 @@ class PipelineDriverBase(torch.nn.Module):
         self.optimizer_inited = False
         self.checkpoint = checkpoint
         self.use_c10d = use_c10d
+        self.module_postprocess = module_postprocess
 
     def _init_remote_executors(self):
         self.rank_worker_rrefs: Dict[int, torch.distributed.rpc.RRef] = {}
@@ -1493,6 +1498,7 @@ class PipelineDriverBase(torch.nn.Module):
                     stage_id=stage_id,
                     mod=descr.mod,
                     mod_name=descr.name,
+                    module_postprocess=self.module_postprocess,
                 ),
             )
             if Pipe.is_stage_init_deferred():
@@ -2047,6 +2053,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         checkpoint=False,
         use_c10d=False,
         loss_reducer: LossReducer = sum_reducer,
+        module_postprocess : Optional[Callable] = None,
     ):
         super().__init__(
             pipe,
@@ -2063,6 +2070,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             checkpoint=checkpoint,
             use_c10d=use_c10d,
             loss_reducer=loss_reducer,
+            module_postprocess=module_postprocess,
         )
         self.single_loss = single_loss
 
@@ -2206,6 +2214,7 @@ class PipelineDriver1F1B(PipelineDriverFillDrain):
         checkpoint=False,
         use_c10d=False,
         loss_reducer: LossReducer = sum_reducer,
+        module_postprocess: Optional[Callable] = None,
     ):
         # In 1F1B with backward stages, the maximum number of outstanding
         # micro-batches equals the number of pipeline stages
@@ -2229,6 +2238,7 @@ class PipelineDriver1F1B(PipelineDriverFillDrain):
             checkpoint=checkpoint,
             use_c10d=use_c10d,
             loss_reducer=loss_reducer,
+            module_postprocess=module_postprocess,
         )
 
 
@@ -2248,6 +2258,7 @@ class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
         checkpoint=False,
         use_c10d=False,
         loss_reducer: LossReducer = sum_reducer,
+        module_postprocess: Optional[Callable] = None,
     ):
         super().__init__(
             pipe,
@@ -2264,4 +2275,5 @@ class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
             checkpoint=checkpoint,
             use_c10d=use_c10d,
             loss_reducer=loss_reducer,
+            module_postprocess=module_postprocess,
         )

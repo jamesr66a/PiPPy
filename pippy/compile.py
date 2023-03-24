@@ -52,6 +52,7 @@ def _compile(
     output_chunk_spec=None,
     checkpoint=False,
     _debug_mask_minibatches: bool = False,
+    module_postprocess : Optional[Callable] = None,
     **kwargs,
 ):
     if ranks is None:
@@ -111,6 +112,7 @@ def _compile(
             checkpoint=checkpoint,
             loss_reducer=loss_reducer,
             _debug_mask_minibatches=_debug_mask_minibatches,
+            module_postprocess=module_postprocess,
         )
 
     if not all_compile:
@@ -136,6 +138,7 @@ def compile(
     output_chunk_spec=None,
     checkpoint=False,
     _debug_mask_minibatches: bool = False,
+    module_postprocess : Optional[Callable] = None,
     **kwargs,
 ):
     return _compile(
@@ -153,6 +156,7 @@ def compile(
         output_chunk_spec=output_chunk_spec,
         checkpoint=checkpoint,
         _debug_mask_minibatches=_debug_mask_minibatches,
+        module_postprocess=module_postprocess,
         **kwargs,
     )
 
@@ -171,6 +175,7 @@ def all_compile(
     output_chunk_spec=None,
     checkpoint=False,
     _debug_mask_minibatches: bool = False,
+    module_postprocess : Optional[Callable] = None,
     **kwargs,
 ):
     return _compile(
@@ -188,5 +193,6 @@ def all_compile(
         output_chunk_spec=output_chunk_spec,
         checkpoint=checkpoint,
         _debug_mask_minibatches=_debug_mask_minibatches,
+        module_postprocess=module_postprocess,
         **kwargs,
     )
