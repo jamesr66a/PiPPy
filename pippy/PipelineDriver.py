@@ -1104,10 +1104,12 @@ class PipeStageExecutor(EventRecorder):
         return len(list(self.mod.parameters())) > 0
 
     def instantiate_optimizer(self, optim_class, *args, **kwargs):
+        logging.info(f"[{self.stage_id}] Creating optimizer")
         assert self._should_instantiate_optim()
         with self.optim_init_cv:
             self.optimizer = optim_class(self.mod.parameters(), *args, **kwargs)
             self.optim_init_cv.notify()
+        logging.info(f"[{self.stage_id}] Optimizer created")
         return self.optimizer
 
     def instantiate_lr_scheduler(self, lr_sched_class, *args, **kwargs):
@@ -1561,6 +1563,7 @@ class PipelineDriverBase(torch.nn.Module):
         self.train(mode=False)
 
     def instantiate_optimizer(self, optim_class, *args, **kwargs):
+        logging.info(f"[root] Instantiating optimizer {optim_class} on root")
         remote_optims = []
         # Keeps track of stage to optimizer mapping
         self.stage_to_optim: Dict = {}
@@ -1573,9 +1576,11 @@ class PipelineDriverBase(torch.nn.Module):
                 self.stage_to_optim[stage] = remote_optim
 
         self.optimizer_inited = True
-        return PipelineOptimizer(
+        rv = PipelineOptimizer(
             [optim for optim in remote_optims if optim is not None]
         )
+        logging.info(f"[root] Instantiated optimizer {rv} on root")
+        return rv
 
     """
     Create learning rate scheduler for the optimizer of the pipeline.
