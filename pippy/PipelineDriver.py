@@ -1221,19 +1221,20 @@ class PipelineOptimizer(torch.optim.Optimizer):
 
         self.param_groups = []
 
-        # Collect RRefs to remote parameters
-        param_group = {"params": []}  # type: ignore[var-annotated]
+        # # Collect RRefs to remote parameters
+        # param_group = {"params": []}  # type: ignore[var-annotated]
 
-        for optim in self.remote_optims:
-            remote_state = optim.rpc_sync().__getstate__()
-            assert isinstance(remote_state, dict)
-            for group in remote_state["param_groups"]:
-                param_group["params"].extend(group["params"])
-                for k in group:
-                    if k != "params":
-                        param_group.setdefault(k, group[k])
+        # self.param_groups = []
+        # for optim in self.remote_optims:
+        #     remote_state = optim.rpc_sync().__getstate__()
+        #     assert isinstance(remote_state, dict)
+        #     for group in remote_state["param_groups"]:
+        #         param_group["params"].extend(group["params"])
+        #         for k in group:
+        #             if k != "params":
+        #                 param_group.setdefault(k, group[k])
 
-        self.param_groups = [param_group]
+        # self.param_groups = [param_group]
 
     def __getstate__(self):
         raise NotImplementedError()
