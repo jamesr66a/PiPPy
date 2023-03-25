@@ -668,15 +668,22 @@ class PipeStageExecutor(EventRecorder):
         self.peer_executors = peer_executors
         return None
 
-    def init_data_parallel(self, n_stages, dp_group_size, dp_pg_cb=None):
+    def init_data_parallel(self, n_stages, dp_group_size, dp_pg_cb=None, is_fsdp=False, **kwargs):
+        DpClass = (
+            torch.distributed.fsdp.FullyShardedDataParallel if is_fsdp else
+            torch.nn.parallel.DistributedDataParallel
+        )
+
+        print(is_fsdp, DpClass, kwargs)
+
         worker_rank = self.rank_worker.rank
         if dp_pg_cb is not None:
             logging.info(
                 f"Rank[{worker_rank}] stage[{self.stage_id}] Initializing data parallel: "
                 f"using DP process groups provided by user"
             )
-            self.mod = torch.nn.parallel.DistributedDataParallel(
-                self.mod, process_group=dp_pg_cb(self.stage_id)
+            self.mod = DpClass(
+                self.mod, process_group=dp_pg_cb(self.stage_id), **kwargs
             )
             return
 
@@ -727,8 +734,8 @@ class PipeStageExecutor(EventRecorder):
 
             # Wrap stage module with DDP using the DP group corresponding to own stage
             if self.stage_id == stage:
-                self.mod = torch.nn.parallel.DistributedDataParallel(
-                    self.mod, process_group=dp_pg_for_stage
+                self.mod = DpClass(
+                    self.mod, process_group=dp_pg_for_stage, **kwargs
                 )
 
     def create_future(self):
@@ -1525,7 +1532,7 @@ class PipelineDriverBase(torch.nn.Module):
                   user can use this Callable to pass in prepared data parallel groups
     """
 
-    def init_data_parallel(self, dp_group_size, dp_pg_cb=None):
+    def init_data_parallel(self, dp_group_size, dp_pg_cb=None, is_fsdp=False, **kwargs):
         if dp_group_size <= 1:
             logging.info(
                 "[root] Data parallel group size <= 1, skipping data parallel initialization"
@@ -1542,7 +1549,7 @@ class PipelineDriverBase(torch.nn.Module):
         for executor in self.stage_to_executor.values():
             futs.append(
                 executor.rpc_async().init_data_parallel(
-                    n_stages, dp_group_size, dp_pg_cb
+                    n_stages, dp_group_size, dp_pg_cb, is_fsdp, **kwargs
                 )
             )
 
