@@ -7,6 +7,7 @@ import warnings
 from enum import Enum
 from inspect import Parameter, Signature
 from typing import Any, Callable, Dict, List, Tuple, Optional
+import os
 
 import torch
 import torch.distributed.rpc as rpc
@@ -307,6 +308,9 @@ class RankWorker(EventRecorder):
             self.waiting_runlist[unique_key] = work_item
 
     def worker_loop(self):
+        # HACK
+        print('!!!!! worker_loop ', self.rank)
+        torch.cuda.set_device(torch.device('cuda', self.rank))
         batch_id_to_remaining_backward_microbatches: Dict[int, int] = {}
         while True:
             work_item = None
@@ -675,6 +679,10 @@ class PipeStageExecutor(EventRecorder):
         )
 
         print(is_fsdp, DpClass, kwargs)
+
+        ## HACK
+        print('!!!!!!! init_data_parallel ', os.environ["LOCAL_RANK"])
+        torch.cuda.set_device(torch.device("cuda", int(os.environ["LOCAL_RANK"])))
 
         worker_rank = self.rank_worker.rank
         if dp_pg_cb is not None:
@@ -1216,6 +1224,22 @@ def _wait_for_all(rpc_futs):
     return results
 
 
+def step_wrapper(optim, closure=None):
+    # HACK
+    print('!!!!!! step_wrapper', os.environ['LOCAL_RANK'])
+    torch.cuda.set_device(torch.device('cuda', int(os.environ['LOCAL_RANK'])))
+
+    return optim.to_here().step(closure=closure)
+
+
+def zero_grad_wrapper(optim, set_to_none : bool = False):
+    # HACK
+    print('!!!!!! zero_grad_wrapper', os.environ['LOCAL_RANK'])
+    torch.cuda.set_device(torch.device('cuda', int(os.environ['LOCAL_RANK'])))
+
+    return optim.to_here().zero_grad(set_to_none=set_to_none)
+
+
 class PipelineOptimizer(torch.optim.Optimizer):
     def __init__(self, remote_optims):
         self.remote_optims = remote_optims
@@ -1228,6 +1252,7 @@ class PipelineOptimizer(torch.optim.Optimizer):
 
         self.param_groups = []
 
+        # HACK: The following triggers a CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL error
         # # Collect RRefs to remote parameters
         # param_group = {"params": []}  # type: ignore[var-annotated]
 
@@ -1263,13 +1288,23 @@ class PipelineOptimizer(torch.optim.Optimizer):
     def zero_grad(self, set_to_none: bool = False):  # type: ignore
         futs = []
         for optim in self.remote_optims:
-            futs.append(optim.rpc_async().zero_grad(set_to_none))
+            # futs.append(optim.rpc_async().zero_grad(set_to_none))
+            futs.append(torch.distributed.rpc.rpc_async(
+                optim.owner(),
+                zero_grad_wrapper,
+                args=(optim, set_to_none),
+            ))
         _wait_for_all(futs)
 
     def step(self, closure=None):
         futs = []
         for optim in self.remote_optims:
-            futs.append(optim.rpc_async().step(closure))
+            # futs.append(optim.rpc_async().step(closure))
+            futs.append(torch.distributed.rpc.rpc_async(
+                optim.owner(),
+                step_wrapper,
+                args=(optim, closure),
+            ))
         _wait_for_all(futs)
 
     def add_param_group(self, param_group):
