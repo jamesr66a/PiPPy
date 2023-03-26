@@ -256,6 +256,10 @@ class RankWorker(EventRecorder):
         )
         self.worker_thread.start()
 
+        self.seq_token_lock = threading.Lock()
+        self.seq_token_cv = threading.Condition(self.seq_token_lock)
+        self.seq_token = 0
+
     def create_stage_executor(self, stage_id, mod, mod_name, module_postprocess):
         if stage_id in self.stage_executors:
             raise AssertionError(
@@ -289,23 +293,37 @@ class RankWorker(EventRecorder):
         )
         return self.stage_executors[stage_id]
 
-    def enqueue_ready_runlist(self, unique_key, work_item):
-        with self.ready_runlist_cv:
-            logging.debug(
-                f"[{self.rank}] Current ready runlist keys: {self.ready_runlist.keys()}"
-            )
-            self.ready_runlist[unique_key] = work_item
-            self.ready_runlist_cv.notify()
+    def enqueue_ready_runlist(self, unique_key, work_item, seq_token):
+        with self.seq_token_cv:
+            if seq_token != self.seq_token:
+                self.seq_token_cv.wait()
 
-    def enqueue_waiting_runlist(self, unique_key, work_item):
-        with self.waiting_runlist_lock:
-            logging.debug(
-                f"[{self.rank}] Current waiting runlist keys: {self.waiting_runlist.keys()}"
-            )
-            assert (
-                unique_key not in self.waiting_runlist
-            ), f"key {unique_key} already in waiting runlist {self.waiting_runlist}"
+            with self.ready_runlist_cv:
+                logging.debug(
+                    f"[{self.rank}] Current ready runlist keys: {self.ready_runlist.keys()}"
+                )
+                self.ready_runlist[unique_key] = work_item
+                self.ready_runlist_cv.notify()
+
+            self.seq_token += 1
+            self.seq_token_cv.notify()
+
+    def enqueue_waiting_runlist(self, unique_key, work_item, seq_token):
+        with self.seq_token_cv:
+            if seq_token != self.seq_token:
+                self.seq_token_cv.wait()
+
+            with self.waiting_runlist_lock:
+                logging.debug(
+                    f"[{self.rank}] Current waiting runlist keys: {self.waiting_runlist.keys()}"
+                )
+                assert (
+                    unique_key not in self.waiting_runlist
+                ), f"key {unique_key} already in waiting runlist {self.waiting_runlist}"
             self.waiting_runlist[unique_key] = work_item
+
+            self.seq_token += 1
+            self.seq_token_cv.notify()
 
     def worker_loop(self):
         # HACK
@@ -759,6 +777,7 @@ class PipeStageExecutor(EventRecorder):
         output_refcount: int,
         batch_id: int,
         num_microbatches: int,
+        seq_token: Optional[int] = None
     ):
         start_ts = time.time()
         target_name = event_name(phase, self.stage_id, cur_microbatch)
@@ -826,14 +845,14 @@ class PipeStageExecutor(EventRecorder):
                 f"[{self.stage_id}][{cur_microbatch}] No RRef arguments. "
                 f"Scheduling directly as READY workitem"
             )
-            self.rank_worker.enqueue_ready_runlist(output_unique_key, work_item)
+            self.rank_worker.enqueue_ready_runlist(output_unique_key, work_item, seq_token)
         else:
             logging.debug(
                 f"[{self.stage_id}][{cur_microbatch}] Scheduling WorkItem as WAITING workitem"
             )
             work_item.state = SchedState.WAITING
             self.rank_worker.enqueue_waiting_runlist(
-                output_unique_key, work_item
+                output_unique_key, work_item, seq_token
             )
 
         # Group Value Ref Args based on source stage
@@ -1721,6 +1740,7 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         kwargs,
         batch_id: int,
         num_microbatches: int,
+        seq_tokens : Dict,
         garbage_collect_values=True,
     ):
         super().__init__(module, garbage_collect_values)
@@ -1757,6 +1777,8 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         self.stage_output_indices: Dict[
             int, List[Tuple[str, int, ValueReference, int]]
         ] = {}
+
+        self.seq_tokens = seq_tokens
 
     def call_module(self, target, args, kwargs):
         assert isinstance(target, str)
@@ -1800,7 +1822,9 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
                 output_refcount=len(users),
                 batch_id=self.batch_id,
                 num_microbatches=self.num_microbatches,
+                seq_token = self.seq_tokens[stage_executor]
             )
+            self.seq_tokens[stage_executor] += 1
             finish_ts = time.time()
             self.record_event(
                 rank=0,
@@ -1884,7 +1908,9 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
                     output_refcount=len(users),
                     batch_id=self.batch_id,
                     num_microbatches=self.num_microbatches,
+                    seq_token=self.seq_tokens[stage_executor],
                 )
+                self.seq_tokens[stage_executor] += 1
                 finish_ts = time.time()
                 self.record_event(
                     rank=0,
@@ -1920,7 +1946,9 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
                 output_refcount=len(users),
                 batch_id=self.batch_id,
                 num_microbatches=self.num_microbatches,
+                seq_token=self.seq_tokens[stage_executor],
             )
+            self.seq_tokens[stage_executor] += 1
             return ValueReference(stage_id, invocation_key)
         elif target is _null_coalesce_accumulate:
             assert "fw_stage" in node.meta
@@ -1942,7 +1970,9 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
                     output_refcount=len(users),
                     batch_id=self.batch_id,
                     num_microbatches=self.num_microbatches,
+                    seq_token=self.seq_tokens[stage_executor],
                 )
+                self.seq_tokens[stage_executor] += 1
                 return ValueReference(stage_id, invocation_key)
             else:
                 return ValueReference(stage_id, "noop")
@@ -1962,7 +1992,7 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             id = f"{name},{self.batch_id}"
             start_ts = time.time()
             stage_executor.rpc_async().coalesced_index_value(
-                self.stage_output_indices[stage_id]
+                self.stage_output_indices[stage_id] # TODO: seq token?
             )
             finish_ts = time.time()
             self.record_event(
@@ -2118,6 +2148,9 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         self._init_remote_executors()
 
+        self.seq_tokens = {e: 0 for _, e in self.remote_stage_executor_rrefs.values()}
+
+
     def forward(self, *args, **kwargs):
         if self.single_loss:
             raise NotImplementedError("Single minibatch loss not implemented")
@@ -2158,6 +2191,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
                 kwargs=kwargs_split[chunk],
                 batch_id=batch_id,
                 num_microbatches=self.chunks,
+                seq_tokens=self.seq_tokens,
             )
             # If user wants to use c10d for P2P, we would perform the shape propagation here. The shape prop is
             # performed per batch, thus supporting dynamic shape in batch dimension. Dynamic shape in microbatch
