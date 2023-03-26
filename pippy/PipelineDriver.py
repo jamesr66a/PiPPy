@@ -309,7 +309,6 @@ class RankWorker(EventRecorder):
 
     def worker_loop(self):
         # HACK
-        print('!!!!! worker_loop ', self.rank)
         torch.cuda.set_device(torch.device('cuda', self.rank))
         batch_id_to_remaining_backward_microbatches: Dict[int, int] = {}
         while True:
@@ -678,10 +677,7 @@ class PipeStageExecutor(EventRecorder):
             torch.nn.parallel.DistributedDataParallel
         )
 
-        print(is_fsdp, DpClass, kwargs)
-
         ## HACK
-        print('!!!!!!! init_data_parallel ', os.environ["LOCAL_RANK"])
         torch.cuda.set_device(torch.device("cuda", int(os.environ["LOCAL_RANK"])))
 
         worker_rank = self.rank_worker.rank
@@ -1226,7 +1222,6 @@ def _wait_for_all(rpc_futs):
 
 def step_wrapper(optim, closure=None):
     # HACK
-    print('!!!!!! step_wrapper', os.environ['LOCAL_RANK'])
     torch.cuda.set_device(torch.device('cuda', int(os.environ['LOCAL_RANK'])))
 
     return optim.to_here().step(closure=closure)
@@ -1234,7 +1229,6 @@ def step_wrapper(optim, closure=None):
 
 def zero_grad_wrapper(optim, set_to_none : bool = False):
     # HACK
-    print('!!!!!! zero_grad_wrapper', os.environ['LOCAL_RANK'])
     torch.cuda.set_device(torch.device('cuda', int(os.environ['LOCAL_RANK'])))
 
     return optim.to_here().zero_grad(set_to_none=set_to_none)
