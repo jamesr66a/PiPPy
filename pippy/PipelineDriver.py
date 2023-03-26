@@ -328,7 +328,28 @@ class RankWorker(EventRecorder):
     def worker_loop(self):
         # HACK
         torch.cuda.set_device(torch.device('cuda', self.rank))
+
         batch_id_to_remaining_backward_microbatches: Dict[int, int] = {}
+
+        PROFILE_OOM = True
+        torch.cuda.memory._record_memory_history(True)
+
+        if PROFILE_OOM:
+            def oom_observer(device, alloc, device_alloc, device_free):
+                # print(torch.cuda.memory_summary())
+                # snapshot right after an OOM happened
+                print('OOM'.center(80, '#'))
+                snapshot = torch.cuda.memory._snapshot()
+                import pickle
+                pickle.dump(snapshot, open(f'oom_snapshot_{self.rank}.pickle', 'wb'))
+                print('OOM dump done'.center(80, '#'))
+
+                for name, stage_executor in self.stage_executors.items():
+                    print(name, stage_executor.fwd_cache)
+                print(batch_id_to_remaining_backward_microbatches)
+
+            torch._C._cuda_attach_out_of_memory_observer(oom_observer)
+
         while True:
             work_item = None
             with self.ready_runlist_cv:
@@ -566,6 +587,21 @@ class RankWorker(EventRecorder):
                 f"for {key}"
             )
             future.set_result(out_val)
+            del args, kwargs
+            if 'f_args' in locals():
+                del f_args
+            if 'f_kwargs' in locals():
+                del f_kwargs
+            if 'flat_tensor_args' in locals():
+                del flat_tensor_args
+            if 'ready_args' in locals():
+                del ready_args
+            if 'out_val' in locals():
+                del out_val
+            if 'args_value_refs' in locals():
+                del args_value_refs
+            if 'kwargs_value_refs' in locals():
+                del kwargs_value_refs
             work_item.state = SchedState.DONE
 
             prev_name = prev_event_name(
