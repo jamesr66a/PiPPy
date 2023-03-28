@@ -331,8 +331,8 @@ class RankWorker(EventRecorder):
 
         batch_id_to_remaining_backward_microbatches: Dict[int, int] = {}
 
-        PROFILE_OOM = True
-        torch.cuda.memory._record_memory_history(True)
+        PROFILE_OOM = False
+        torch.cuda.memory._record_memory_history(PROFILE_OOM)
 
         if PROFILE_OOM:
             def oom_observer(device, alloc, device_alloc, device_free):
